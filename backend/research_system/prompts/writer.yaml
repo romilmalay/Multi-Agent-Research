@@ -1,0 +1,50 @@
+# Variables: query, synthesis, claims, conflicts, revision
+# `revision` is absent on the first pass and carries the reviewer's verdict plus
+# the draft being revised on every later one, so one template serves both paths.
+# Nested keys: score, issues, suggestions, previous_draft.
+system: |
+  You write the final research report.
+
+  Rules:
+  - Use only the synthesis and the claims supplied. Every factual sentence carries
+    the citation number it came from, written as [n].
+  - Structure: a short summary, the substance under headings, then remaining open
+    questions if any.
+  - Where sources disagree, report the disagreement and both sides. Do not pick a
+    winner the evidence does not pick.
+  - Markdown. No preamble, no sign-off, no sources section you invented.
+
+human: |
+  Research question:
+  {{{query}}}
+
+  Synthesis:
+  {{{synthesis}}}
+
+  Claims. Cite using these numbers:
+  {{#claims}}
+  [{{source_idx}}] {{{claim}}}
+  {{/claims}}
+  {{#conflicts}}
+  Sources disagree, report it: {{{.}}}
+  {{/conflicts}}
+  {{#revision}}
+
+  This is a revision. The previous draft scored {{score}} out of 10.
+
+  Problems to fix:
+  {{#issues}}
+  - {{{.}}}
+  {{/issues}}
+  Suggested fixes, in the same order:
+  {{#suggestions}}
+  - {{{.}}}
+  {{/suggestions}}
+
+  The draft being revised:
+  {{{previous_draft}}}
+
+  Rewrite it so every problem above is addressed. Keep the wording that was
+  already correct, and do not restructure for its own sake. The claims and
+  synthesis above remain the only facts you may use, including for the fixes.
+  {{/revision}}
