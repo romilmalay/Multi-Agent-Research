@@ -1,0 +1,100 @@
+# The single source of every default value. `settings.py` declares the types and
+# reads them from here; environment variables override individual values.
+
+llm:
+  provider: openai
+  model: gpt-4.1-nano
+  timeout_seconds: 60
+  max_retries: 2
+
+  # USD per 1M tokens, keyed by model id.
+  prices:
+    gpt-4.1-nano:
+      input: 0.10
+      output: 0.40
+    gpt-4o-mini:
+      input: 0.15
+      output: 0.60
+
+# `uses_llm: false` agents are pure Python and carry no generation settings.
+agents:
+  planner:
+    uses_llm: true
+    temperature: 0.3
+    max_output_tokens: 1024
+
+  researcher:
+    uses_llm: false
+    max_sources_per_topic: 8
+    tools: [tavily, wikipedia, scraper]
+
+  quality_gate:
+    uses_llm: false
+
+  analyst:
+    uses_llm: true
+    temperature: 0.2
+    max_output_tokens: 2048
+    min_claims: 5
+    max_claims: 8
+
+  synthesizer:
+    uses_llm: true
+    temperature: 0.3
+    max_output_tokens: 2048
+
+  writer:
+    uses_llm: true
+    temperature: 0.5
+    max_output_tokens: 4096
+
+  reviewer:
+    uses_llm: true
+    temperature: 0.0
+    max_output_tokens: 1024
+
+pipeline:
+  max_sub_topics: 3
+  quality_threshold: 0.6
+  max_quality_retries: 1
+  max_revisions: 2
+  review_pass_score: 7
+  recursion_limit: 50
+  # human_review interrupts on conflicts, or this many claims below the floor.
+  low_confidence_threshold: 0.5
+  max_low_confidence_claims: 2
+
+budget:
+  max_tokens_per_run: 50000
+  # Above this fraction of the cap: fewer sub-topics, fewer sources, no retries.
+  degrade_at_fraction: 0.8
+
+search:
+  results_per_query: 5
+  snippet_max_chars: 500
+  request_timeout_seconds: 15
+  cache:
+    enabled: true
+    path: .cache/search_cache.sqlite
+    ttl_seconds: 86400
+
+guardrails:
+  query_min_chars: 10
+  query_max_chars: 500
+  injection_enabled: true
+  pii_enabled: true
+  rate_limit:
+    requests_per_minute: 30
+    burst: 5
+
+evaluation:
+  dataset: evals/datasets/testset.yaml
+  judge_model: gpt-4o-mini
+  # Judge scores accuracy, completeness and citation quality on 0-3.
+  score_max: 3
+  # Accuracy gain multi-agent must show over the single-agent baseline.
+  target_improvement_pct: 20
+
+logging:
+  level: INFO
+  format: json
