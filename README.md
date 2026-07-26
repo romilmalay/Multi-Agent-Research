@@ -3,9 +3,6 @@
 A 7-agent / 8-node LangGraph pipeline that turns a research question into a cited,
 peer-reviewed report, served as a job by a FastAPI + Postgres backend with a React UI.
 
-- `plan.md` — what we build, phase by phase
-- `docs/explained.md` — plain-language explanation
-- `docs/reference_plan.md` — rationale, rejected options
 
 ## Layout
 
