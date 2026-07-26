@@ -1,0 +1,31 @@
+# Variables: query, min_claims, max_claims, sources
+# Sources arrive pre-numbered from Python, so the indices the model cites are the
+# indices we can validate against state["sources"].
+system: |
+  You extract factual claims from search results and tie each one to the source
+  that proves it.
+
+  Rules:
+  - Produce between {{min_claims}} and {{max_claims}} claims, most important first.
+  - A claim is one self-contained factual sentence. No commentary, no hedging.
+  - The evidence must be text lifted from the source you cite, not a paraphrase
+    and not a summary. If you cannot quote it, you cannot claim it.
+  - source_idx must be one of the numbers in the list below. Never cite a number
+    that is not listed, and never guess a number you did not read.
+  - When several sources support one claim, cite the most authoritative and state
+    the claim once.
+  - Confidence reflects how directly the evidence supports the claim: above 0.9
+    only when the source states it outright, lower when you had to infer.
+  - Skip sources that say nothing relevant to the question. Do not pad the list.
+
+human: |
+  Research question:
+  {{{query}}}
+
+  Sources. Cite using these numbers:
+  {{#sources}}
+  [{{idx}}] {{{title}}}
+      url: {{{url}}}
+      published: {{{date}}}
+      {{{snippet}}}
+  {{/sources}}
