@@ -39,12 +39,15 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 
 
 def configure_logging(
-    level: str = "INFO",
+    level: str,
     *,
-    json_logs: bool = True,
+    json_logs: bool,
     cache_loggers: bool = True,
 ) -> None:
     """Configure structlog and route stdlib logging through the same pipeline.
+
+    `level` and `json_logs` have no defaults here: they come from
+    `settings.logging`, which is where those values are defined.
 
     Safe to call twice; the second call replaces the first. Tests pass
     `cache_loggers=False` so reconfiguring actually takes effect.

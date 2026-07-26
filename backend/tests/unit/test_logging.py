@@ -21,9 +21,9 @@ from research_system.logging import (
 )
 
 
-def _configure(**kwargs: Any) -> None:
+def _configure(level: str = "INFO", *, json_logs: bool = True, **kwargs: Any) -> None:
     """Configure with caching off, so repeated calls in one session take effect."""
-    configure_logging(cache_loggers=False, **kwargs)
+    configure_logging(level, json_logs=json_logs, cache_loggers=False, **kwargs)
 
 
 def _emit(capsys: pytest.CaptureFixture[str], **kwargs: Any) -> dict[str, Any]:
