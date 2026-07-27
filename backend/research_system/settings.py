@@ -115,6 +115,11 @@ class BudgetSettings(Section):
     max_tokens_per_run: int = Field(gt=0)
     degrade_at_fraction: float = Field(gt=0.0, le=1.0)
 
+    @property
+    def degrade_at_tokens(self) -> int:
+        """The token count where degradation starts, derived once from the cap."""
+        return int(self.max_tokens_per_run * self.degrade_at_fraction)
+
 
 class CacheSettings(Section):
     enabled: bool
