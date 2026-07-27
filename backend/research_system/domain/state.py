@@ -5,6 +5,15 @@ from typing import Annotated, Any, TypedDict
 from uuid import uuid4
 
 
+class SearchResult(TypedDict):
+    """One source, however it was found. Every tool returns this shape."""
+
+    title: str
+    snippet: str
+    url: str
+    date: str
+
+
 class ResearchState(TypedDict, total=False):
     """State for one research run, accumulated across the 9 graph nodes."""
 
@@ -29,8 +38,8 @@ class ResearchState(TypedDict, total=False):
     """The planner's prose rationale for that split."""
 
     # --- researchers (parallel) ---
-    sources: Annotated[list[dict[str, Any]], operator.add]
-    """Search results: {title, snippet, url, date}. Merged from every researcher."""
+    sources: Annotated[list[SearchResult], operator.add]
+    """Search results, merged from every researcher."""
 
     search_queries_used: Annotated[list[str], operator.add]
     """Every query string actually sent to a tool, for the trace."""

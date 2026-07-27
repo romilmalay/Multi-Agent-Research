@@ -122,10 +122,24 @@ class CacheSettings(Section):
     ttl_seconds: int = Field(gt=0)
 
 
+class RetrySettings(Section):
+    max_attempts: int = Field(ge=1)
+    initial_backoff_seconds: float = Field(gt=0)
+    max_backoff_seconds: float = Field(gt=0)
+    budget_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _range_is_ordered(self) -> "RetrySettings":
+        if self.max_backoff_seconds < self.initial_backoff_seconds:
+            raise ValueError("max_backoff_seconds is below initial_backoff_seconds")
+        return self
+
+
 class SearchSettings(Section):
     results_per_query: int = Field(gt=0)
     snippet_max_chars: int = Field(gt=0)
     request_timeout_seconds: float = Field(gt=0)
+    retry: RetrySettings
     cache: CacheSettings
 
 

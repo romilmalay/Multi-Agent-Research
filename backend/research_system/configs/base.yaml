@@ -73,6 +73,11 @@ search:
   results_per_query: 5
   snippet_max_chars: 500
   request_timeout_seconds: 15
+  retry:
+    max_attempts: 3
+    initial_backoff_seconds: 1.0
+    max_backoff_seconds: 8.0
+    budget_seconds: 30.0
   cache:
     enabled: true
     path: .cache/search_cache.sqlite

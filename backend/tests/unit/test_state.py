@@ -1,7 +1,7 @@
 import operator
 from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
-from research_system.domain.state import ResearchState, default_state
+from research_system.domain.state import ResearchState, SearchResult, default_state
 
 REDUCED_FIELDS = {
     "token_count",
@@ -18,7 +18,7 @@ EXPECTED_FIELDS: dict[str, Any] = {
     "pipeline_trace": list[dict[str, Any]],
     "sub_topics": list[str],
     "research_plan": str,
-    "sources": list[dict[str, Any]],
+    "sources": list[SearchResult],
     "search_queries_used": list[str],
     "quality_score": float,
     "quality_passed": bool,
@@ -117,5 +117,5 @@ def test_default_state_accepts_a_caller_run_id() -> None:
 def test_default_state_returns_fresh_containers() -> None:
     """Two runs must not share a list, or one run's sources leak into the other."""
     first, second = default_state("a"), default_state("b")
-    first["sources"].append({"url": "x"})
+    first["sources"].append(SearchResult(title="t", snippet="s", url="x", date=""))
     assert second["sources"] == []
