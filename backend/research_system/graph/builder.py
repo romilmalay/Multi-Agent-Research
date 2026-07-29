@@ -13,7 +13,9 @@ between them live in `routing`; this module is the nodes and the wiring.
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import RetryPolicy
 
 from research_system.agents import (
     analyst,
@@ -32,6 +34,25 @@ from research_system.graph.routing import (
     route_after_review,
     route_to_researchers,
 )
+from research_system.settings import Settings, get_settings
+
+LLM_RETRY = RetryPolicy(max_attempts=2)
+"""For nodes that call a model.
+
+The client already retries a failed HTTP call (`llm.max_retries`), and every LLM
+agent catches its own exceptions and degrades, so this covers the narrow band
+left over: something raised outside the agent's own guard. `default_retry_on`
+declines to retry `ValueError` and friends, which is what a bad prompt or a
+schema violation raises — retrying those would just spend the tokens twice.
+"""
+
+# No node carries a `CachePolicy`, and that is a decision rather than an omission.
+# The only candidate is `quality_gate` — the one node that is a pure function of
+# its input — and a cache hit there replays the node's writes *including its
+# routing decision*, without calling the router again. The gate's first verdict is
+# "retry", so every later visit would be served that same answer from the cache and
+# the run would bounce between the gate and the retry until it hit the step limit.
+# The gate costs microseconds of arithmetic. There is nothing here worth caching.
 
 
 async def planner_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
@@ -85,18 +106,18 @@ async def reviewer_node(state: ResearchState, runtime: Runtime[RunContext]) -> d
 
 
 def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, ResearchState]:
-    """The eight nodes and the edges between them. Later steps add the policies."""
+    """The eight nodes, the edges between them, and the per-node policies."""
     graph: StateGraph[ResearchState, RunContext, ResearchState, ResearchState] = StateGraph(
         ResearchState, context_schema=RunContext
     )
-    graph.add_node(planner.AGENT, planner_node)
+    graph.add_node(planner.AGENT, planner_node, retry_policy=LLM_RETRY)
     graph.add_node(researcher.AGENT, researcher_node)
     graph.add_node(quality_gate.AGENT, quality_gate_node)
     graph.add_node(RETRY_RESEARCHER, retry_researcher_node)
-    graph.add_node(analyst.AGENT, analyst_node)
-    graph.add_node(synthesizer.AGENT, synthesizer_node)
-    graph.add_node(writer.AGENT, writer_node)
-    graph.add_node(reviewer.AGENT, reviewer_node)
+    graph.add_node(analyst.AGENT, analyst_node, retry_policy=LLM_RETRY)
+    graph.add_node(synthesizer.AGENT, synthesizer_node, retry_policy=LLM_RETRY)
+    graph.add_node(writer.AGENT, writer_node, retry_policy=LLM_RETRY)
+    graph.add_node(reviewer.AGENT, reviewer_node, retry_policy=LLM_RETRY)
 
     graph.add_edge(START, planner.AGENT)
     # The planner has one destination, reached once per sub-topic rather than once.
@@ -117,3 +138,19 @@ def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, Resear
     # on every pass it makes — including the ones that produced nothing.
     graph.add_conditional_edges(reviewer.AGENT, route_after_review, [writer.AGENT, END])
     return graph
+
+
+def compile_graph(
+    *, settings: Settings | None = None
+) -> CompiledStateGraph[ResearchState, RunContext, ResearchState, ResearchState]:
+    """The runnable graph, with a bounded step count.
+
+    `recursion_limit` is the backstop under both loops: the retry counter and the
+    revision counter are what should stop them, and this is what stops a run that
+    escapes both from spinning until the budget is gone. It is a whole-run step
+    count, so it is set here rather than left to whichever caller invokes.
+    """
+    settings = settings or get_settings()
+    compiled = build_graph().compile()
+    compiled.config = {"recursion_limit": settings.pipeline.recursion_limit}
+    return compiled

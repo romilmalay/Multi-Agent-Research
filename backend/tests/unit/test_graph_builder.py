@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 
@@ -16,8 +17,10 @@ from research_system.agents import synthesizer as synthesizer_module
 from research_system.agents import writer as writer_module
 from research_system.domain.state import ResearchState, default_state
 from research_system.graph.builder import (
+    LLM_RETRY,
     analyst_node,
     build_graph,
+    compile_graph,
     planner_node,
     quality_gate_node,
     researcher_node,
@@ -36,6 +39,12 @@ from research_system.settings import Settings
 from research_system.tools.toolbox import Toolbox
 
 QUERY = "What are the effects of microplastics on marine life?"
+SOURCE = {
+    "title": "a study",
+    "snippet": "measured 1,200 samples over 18 months",
+    "url": "https://arxiv.org/abs/1",
+    "date": "2026-01-01",
+}
 EXPECTED_NODES = {
     "planner",
     "researcher",
@@ -82,6 +91,41 @@ def test_the_graph_compiles() -> None:
     """Compiling is the validation: every node reachable, every edge resolvable."""
     compiled = build_graph().compile()
     assert set(compiled.nodes) == EXPECTED_NODES | {START}
+
+
+def test_only_the_model_nodes_retry() -> None:
+    """The two that call no model have nothing transient to retry."""
+    nodes = build_graph().nodes
+    retrying = {name for name, node in nodes.items() if node.retry_policy}
+    assert retrying == {"planner", "analyst", "synthesizer", "writer", "reviewer"}
+
+
+def test_a_retry_is_spent_on_transient_failures_only() -> None:
+    """A bad prompt fails the same way twice; retrying it just bills the tokens twice."""
+    should_retry = LLM_RETRY.retry_on
+    assert callable(should_retry)
+    assert should_retry(ConnectionError("upstream dropped")) is True
+    assert should_retry(ValueError("schema violation")) is False
+
+
+def test_no_node_is_cached() -> None:
+    """Deliberate: a cache hit replays the node's routing decision without re-deciding.
+
+    Caching `quality_gate` — the only pure node — would serve its first "retry"
+    verdict on every later visit, and the run would bounce between the gate and
+    the retry until the step limit killed it.
+    """
+    nodes = build_graph().nodes
+    assert not [name for name, node in nodes.items() if node.cache_policy]
+
+
+def test_the_compiled_graph_carries_the_configured_step_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Set here, not at the call site: it bounds the whole run, not one invocation."""
+    monkeypatch.setenv("PIPELINE__RECURSION_LIMIT", "12")
+
+    assert compile_graph(settings=Settings()).config == {"recursion_limit": 12}
 
 
 def test_the_run_starts_at_the_planner() -> None:
@@ -230,6 +274,48 @@ async def test_retry_researcher_increments_the_retry_count(
 
     assert update["retry_count"] == 2
     assert update["errors"] == ["tavily failed"]
+
+
+async def test_the_step_limit_stops_a_loop_the_counters_do_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backstop: a writer that forgets to count would otherwise revise forever."""
+    monkeypatch.setenv("PIPELINE__RECURSION_LIMIT", "8")
+
+    async def plan(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"sub_topics": ["one sub-topic"]}
+
+    async def research(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"sources": [SOURCE]}
+
+    def assess(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"quality_passed": True, "quality_score": 0.9}
+
+    async def analyse(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"key_claims": [{"claim": "a claim", "confidence": 0.9}]}
+
+    async def synthesise(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"synthesis": "the sources agree"}
+
+    async def write_without_counting(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"current_draft": "a draft"}  # the bug: `revision_count` never moves
+
+    async def reject(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"review": {"score": 3, "issues": [], "suggestions": [], "passed": False}}
+
+    for module, name, stub in (
+        (planner_module, "plan", plan),
+        (researcher_module, "research", research),
+        (quality_gate_module, "assess", assess),
+        (analyst_module, "analyse", analyse),
+        (synthesizer_module, "synthesise", synthesise),
+        (writer_module, "write", write_without_counting),
+        (reviewer_module, "review", reject),
+    ):
+        monkeypatch.setattr(module, name, stub)
+
+    with pytest.raises(GraphRecursionError):
+        await compile_graph(settings=Settings()).ainvoke(default_state(QUERY))
 
 
 async def test_a_gate_that_never_passes_still_reaches_the_analyst(
