@@ -60,9 +60,6 @@ pipeline:
   max_revisions: 2
   review_pass_score: 7
   recursion_limit: 50
-  # human_review interrupts on conflicts, or this many claims below the floor.
-  low_confidence_threshold: 0.5
-  max_low_confidence_claims: 2
 
 budget:
   max_tokens_per_run: 50000

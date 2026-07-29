@@ -4,11 +4,8 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import Command
 
 from research_system.agents import analyst as analyst_module
 from research_system.agents import planner as planner_module
@@ -21,7 +18,6 @@ from research_system.domain.state import ResearchState, default_state
 from research_system.graph.builder import (
     analyst_node,
     build_graph,
-    human_review_node,
     planner_node,
     quality_gate_node,
     researcher_node,
@@ -31,7 +27,7 @@ from research_system.graph.builder import (
     writer_node,
 )
 from research_system.graph.context import RunContext
-from research_system.graph.routing import HUMAN_REVIEW, RETRY_RESEARCHER, route_after_quality
+from research_system.graph.routing import RETRY_RESEARCHER, route_after_quality
 from research_system.settings import Settings
 from research_system.tools.toolbox import Toolbox
 
@@ -43,7 +39,6 @@ EXPECTED_NODES = {
     RETRY_RESEARCHER,
     "analyst",
     "synthesizer",
-    HUMAN_REVIEW,
     "writer",
     "reviewer",
 }
@@ -71,7 +66,7 @@ def runtime(
     return Runtime(context=RunContext(settings=settings, toolbox=toolbox))
 
 
-def test_registers_exactly_the_nine_nodes() -> None:
+def test_registers_exactly_the_eight_nodes() -> None:
     assert set(build_graph().nodes) == EXPECTED_NODES
 
 
@@ -264,28 +259,3 @@ async def test_a_gate_that_never_passes_still_reaches_the_analyst(
     assert final["retry_count"] == 1  # the configured allowance, spent once
     assert gate_runs == 2  # the retry is re-scored, not trusted
     assert final["key_claims"] == [{"claim": "reached the analyst"}]
-
-
-async def test_human_review_interrupts_and_records_the_verdict() -> None:
-    """The node pauses on the first pass and finishes on the resumed one."""
-    builder: StateGraph[ResearchState, RunContext, ResearchState, ResearchState] = StateGraph(
-        ResearchState, context_schema=RunContext
-    )
-    builder.add_node(HUMAN_REVIEW, human_review_node)
-    builder.add_edge(START, HUMAN_REVIEW)
-    builder.add_edge(HUMAN_REVIEW, END)
-    graph = builder.compile(checkpointer=InMemorySaver())
-    config: RunnableConfig = {"configurable": {"thread_id": "run-1"}}
-
-    state = default_state(QUERY)
-    state["conflicts"] = ["source 0 and source 2 disagree on the ingestion rate"]
-    paused = await graph.ainvoke(state, config=config)
-
-    assert paused["__interrupt__"][0].value["conflicts"] == state["conflicts"]
-    assert paused["pipeline_trace"] == []
-
-    resumed = await graph.ainvoke(Command(resume="approved, keep both claims"), config=config)
-
-    entry = resumed["pipeline_trace"][-1]
-    assert entry["agent"] == HUMAN_REVIEW
-    assert "approved, keep both claims" in entry["summary"]

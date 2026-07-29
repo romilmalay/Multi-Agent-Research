@@ -107,8 +107,6 @@ class PipelineSettings(Section):
     max_revisions: int = Field(ge=0)
     review_pass_score: int = Field(ge=1, le=10)
     recursion_limit: int = Field(gt=0)
-    low_confidence_threshold: float = Field(ge=0.0, le=1.0)
-    max_low_confidence_claims: int = Field(ge=0)
 
 
 class BudgetSettings(Section):

@@ -1,4 +1,4 @@
-"""The nine nodes of the research graph, registered on one `StateGraph`.
+"""The eight nodes of the research graph, registered on one `StateGraph`.
 
 Every node here is a thin adapter, and that is the point. The agents in
 `research_system.agents` take their dependencies as keyword arguments and know
@@ -10,12 +10,10 @@ The dependencies those adapters pass on travel in `RunContext`, and the decision
 between them live in `routing`; this module is the nodes and the wiring.
 """
 
-import time
 from typing import Any
 
 from langgraph.graph import START, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import interrupt
 
 from research_system.agents import (
     analyst,
@@ -26,11 +24,9 @@ from research_system.agents import (
     synthesizer,
     writer,
 )
-from research_system.agents.trace import trace_entry
 from research_system.domain.state import ResearchState
 from research_system.graph.context import RunContext, run_context
 from research_system.graph.routing import (
-    HUMAN_REVIEW,
     RETRY_RESEARCHER,
     route_after_quality,
     route_to_researchers,
@@ -77,28 +73,6 @@ async def synthesizer_node(state: ResearchState, runtime: Runtime[RunContext]) -
     return await synthesizer.synthesise(state, settings=run_context(runtime).settings)
 
 
-def human_review_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
-    """Pause the run for a human verdict on the flagged claims.
-
-    `interrupt` does not return here on the first pass: it checkpoints and hands
-    control back to the caller. When the caller resumes with an answer, the node
-    re-runs from the top and this call returns that answer.
-    """
-    started = time.perf_counter()
-    verdict = interrupt(
-        {
-            "query": state["query"],
-            "conflicts": state["conflicts"],
-            "key_claims": state["key_claims"],
-        }
-    )
-    return {
-        "pipeline_trace": [
-            trace_entry(HUMAN_REVIEW, started=started, tokens=0, summary=f"verdict: {verdict}"),
-        ],
-    }
-
-
 async def writer_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Write a draft, or revise the last one against the reviewer's issues."""
     return await writer.write(state, settings=run_context(runtime).settings)
@@ -110,7 +84,7 @@ async def reviewer_node(state: ResearchState, runtime: Runtime[RunContext]) -> d
 
 
 def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, ResearchState]:
-    """The nine nodes and the fan-out into them. Later steps add the rest of the edges."""
+    """The eight nodes and the edges between them. Later steps add the policies."""
     graph: StateGraph[ResearchState, RunContext, ResearchState, ResearchState] = StateGraph(
         ResearchState, context_schema=RunContext
     )
@@ -120,7 +94,6 @@ def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, Resear
     graph.add_node(RETRY_RESEARCHER, retry_researcher_node)
     graph.add_node(analyst.AGENT, analyst_node)
     graph.add_node(synthesizer.AGENT, synthesizer_node)
-    graph.add_node(HUMAN_REVIEW, human_review_node)
     graph.add_node(writer.AGENT, writer_node)
     graph.add_node(reviewer.AGENT, reviewer_node)
 
@@ -135,4 +108,7 @@ def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, Resear
     # The retry is re-scored, not trusted: it re-enters the gate it was sent back by.
     # `retry_count`, which the node itself increments, is what stops that being a loop.
     graph.add_edge(RETRY_RESEARCHER, quality_gate.AGENT)
+
+    graph.add_edge(analyst.AGENT, synthesizer.AGENT)
+    graph.add_edge(synthesizer.AGENT, writer.AGENT)
     return graph

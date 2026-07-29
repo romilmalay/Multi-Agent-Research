@@ -16,9 +16,8 @@ from research_system.domain.state import ResearchState
 from research_system.graph.context import RunContext, run_context
 from research_system.settings import get_settings
 
-# The two nodes with no agent module of their own are named here, where the
-# routers that reach them live. The other seven answer to their agent's `AGENT`.
-HUMAN_REVIEW = "human_review"
+# The one node with no agent module of its own is named here, where the router
+# that reaches it lives. The other seven answer to their agent's `AGENT`.
 RETRY_RESEARCHER = "retry_researcher"
 
 

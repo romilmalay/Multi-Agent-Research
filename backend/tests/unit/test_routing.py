@@ -128,3 +128,11 @@ def test_quality_gate_branches_to_the_analyst_or_a_retry() -> None:
     assert [set(branch.ends or {}) for branch in branches.values()] == [
         {"analyst", RETRY_RESEARCHER}
     ]
+
+
+def test_the_analyst_hands_off_to_the_synthesizer() -> None:
+    assert ("analyst", "synthesizer") in build_graph().edges
+
+
+def test_the_synthesizer_hands_off_to_the_writer() -> None:
+    assert ("synthesizer", "writer") in build_graph().edges
