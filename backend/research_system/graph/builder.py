@@ -12,7 +12,7 @@ between them live in `routing`; this module is the nodes and the wiring.
 
 from typing import Any
 
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
 
 from research_system.agents import (
@@ -29,6 +29,7 @@ from research_system.graph.context import RunContext, run_context
 from research_system.graph.routing import (
     RETRY_RESEARCHER,
     route_after_quality,
+    route_after_review,
     route_to_researchers,
 )
 
@@ -111,4 +112,8 @@ def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, Resear
 
     graph.add_edge(analyst.AGENT, synthesizer.AGENT)
     graph.add_edge(synthesizer.AGENT, writer.AGENT)
+    graph.add_edge(writer.AGENT, reviewer.AGENT)
+    # The refinement loop, bounded by `revision_count`, which the writer increments
+    # on every pass it makes — including the ones that produced nothing.
+    graph.add_conditional_edges(reviewer.AGENT, route_after_review, [writer.AGENT, END])
     return graph

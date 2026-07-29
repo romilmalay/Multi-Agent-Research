@@ -8,10 +8,11 @@ compiled graph.
 
 from typing import Any
 
+from langgraph.graph import END
 from langgraph.runtime import Runtime
 from langgraph.types import Send
 
-from research_system.agents import analyst, researcher
+from research_system.agents import analyst, researcher, writer
 from research_system.domain.state import ResearchState
 from research_system.graph.context import RunContext, run_context
 from research_system.settings import get_settings
@@ -58,3 +59,24 @@ def route_after_quality(state: ResearchState, runtime: Runtime[RunContext]) -> s
     if state["retry_count"] < settings.pipeline.max_quality_retries:
         return RETRY_RESEARCHER
     return analyst.AGENT
+
+
+def route_after_review(state: ResearchState, runtime: Runtime[RunContext]) -> str:
+    """Ship it, or send it back for one more revision.
+
+    The two ways out are the two the reviewer publishes `final_report` on: the
+    draft was accepted, or the revisions are spent and this draft is the best
+    there will be. That correspondence is the contract — a run ending on any
+    other condition would end with an empty report.
+
+    `review` is empty when the reviewer had nothing to grade or its own call
+    failed. That is not a pass, so such a draft is rewritten while revisions
+    remain, and shipped ungraded when they are not.
+    """
+    if state["review"].get("passed"):
+        return END
+
+    pipeline = (run_context(runtime).settings or get_settings()).pipeline
+    if state["revision_count"] >= pipeline.max_revisions:
+        return END
+    return writer.AGENT

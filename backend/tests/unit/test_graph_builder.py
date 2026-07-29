@@ -27,7 +27,11 @@ from research_system.graph.builder import (
     writer_node,
 )
 from research_system.graph.context import RunContext
-from research_system.graph.routing import RETRY_RESEARCHER, route_after_quality
+from research_system.graph.routing import (
+    RETRY_RESEARCHER,
+    route_after_quality,
+    route_after_review,
+)
 from research_system.settings import Settings
 from research_system.tools.toolbox import Toolbox
 
@@ -72,6 +76,17 @@ def test_registers_exactly_the_eight_nodes() -> None:
 
 def test_context_schema_is_the_run_context() -> None:
     assert build_graph().context_schema is RunContext
+
+
+def test_the_graph_compiles() -> None:
+    """Compiling is the validation: every node reachable, every edge resolvable."""
+    compiled = build_graph().compile()
+    assert set(compiled.nodes) == EXPECTED_NODES | {START}
+
+
+def test_the_run_starts_at_the_planner() -> None:
+    drawn = build_graph().compile().get_graph()
+    assert [edge.target for edge in drawn.edges if edge.source == START] == ["planner"]
 
 
 def test_run_context_defaults_to_no_overrides() -> None:
@@ -259,3 +274,44 @@ async def test_a_gate_that_never_passes_still_reaches_the_analyst(
     assert final["retry_count"] == 1  # the configured allowance, spent once
     assert gate_runs == 2  # the retry is re-scored, not trusted
     assert final["key_claims"] == [{"claim": "reached the analyst"}]
+
+
+async def test_a_reviewer_that_never_passes_still_ends(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refinement loop, run for real: every draft rejected, the run still ends.
+
+    Two nodes wired to the router, so what is under test is the bound — a writer
+    that keeps being sent back until `revision_count` catches up with the config.
+    """
+    drafts = 0
+
+    async def fake_write(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        nonlocal drafts
+        drafts += 1
+        return {
+            "drafts": [*state["drafts"], f"draft {drafts}"],
+            "current_draft": f"draft {drafts}",
+            "revision_count": state["revision_count"] + 1,
+        }
+
+    async def fake_review(state: ResearchState, **kwargs: Any) -> dict[str, Any]:
+        return {"review": {"score": 4, "issues": ["thin"], "suggestions": [], "passed": False}}
+
+    monkeypatch.setattr(writer_module, "write", fake_write)
+    monkeypatch.setattr(reviewer_module, "review", fake_review)
+
+    builder: StateGraph[ResearchState, RunContext, ResearchState, ResearchState] = StateGraph(
+        ResearchState, context_schema=RunContext
+    )
+    builder.add_node("writer", writer_node)
+    builder.add_node("reviewer", reviewer_node)
+    builder.add_edge(START, "writer")
+    builder.add_edge("writer", "reviewer")
+    builder.add_conditional_edges("reviewer", route_after_review, ["writer", END])
+
+    final = await builder.compile().ainvoke(default_state(QUERY))
+
+    assert drafts == settings.pipeline.max_revisions
+    assert final["revision_count"] == settings.pipeline.max_revisions
+    assert final["review"]["passed"] is False
