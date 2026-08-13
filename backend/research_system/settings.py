@@ -109,6 +109,10 @@ class PipelineSettings(Section):
     recursion_limit: int = Field(gt=0)
 
 
+class CheckpointSettings(Section):
+    path: Path
+
+
 class BudgetSettings(Section):
     max_tokens_per_run: int = Field(gt=0)
     degrade_at_fraction: float = Field(gt=0.0, le=1.0)
@@ -191,6 +195,7 @@ class Settings(BaseSettings):
     llm: LLMSettings
     agents: AgentsSettings
     pipeline: PipelineSettings
+    checkpoint: CheckpointSettings
     budget: BudgetSettings
     search: SearchSettings
     guardrails: GuardrailsSettings

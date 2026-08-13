@@ -15,7 +15,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import RetryPolicy
+from langgraph.types import Checkpointer, RetryPolicy
 
 from research_system.agents import (
     analyst,
@@ -141,16 +141,22 @@ def build_graph() -> StateGraph[ResearchState, RunContext, ResearchState, Resear
 
 
 def compile_graph(
-    *, settings: Settings | None = None
+    *,
+    checkpointer: Checkpointer = None,
+    settings: Settings | None = None,
 ) -> CompiledStateGraph[ResearchState, RunContext, ResearchState, ResearchState]:
-    """The runnable graph, with a bounded step count.
+    """The runnable graph, with a bounded step count and somewhere to save its state.
 
     `recursion_limit` is the backstop under both loops: the retry counter and the
     revision counter are what should stop them, and this is what stops a run that
     escapes both from spinning until the budget is gone. It is a whole-run step
     count, so it is set here rather than left to whichever caller invokes.
+
+    The checkpointer is passed in rather than opened here, because it owns a
+    connection and the caller owns its lifetime. Without one the graph still runs
+    — it just cannot be resumed, which is what tests and one-shot runs want.
     """
     settings = settings or get_settings()
-    compiled = build_graph().compile()
+    compiled = build_graph().compile(checkpointer=checkpointer)
     compiled.config = {"recursion_limit": settings.pipeline.recursion_limit}
     return compiled
