@@ -67,7 +67,6 @@ def assess(state: ResearchState, *, settings: Settings | None = None) -> dict[st
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=0,
                 summary=f"{score:.2f} vs {threshold:.2f} over {len(ranking)} sources: "
                 + ("pass" if passed else "fail"),
             )

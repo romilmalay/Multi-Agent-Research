@@ -90,7 +90,7 @@ async def analyse(state: ResearchState, *, settings: Settings | None = None) -> 
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=usage.total_tokens,
+                usage=usage,
                 summary=f"{len(claims)} claims from {len(sources)} sources",
                 prompt_hash=prompt.hash,
             )

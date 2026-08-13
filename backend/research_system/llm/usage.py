@@ -31,6 +31,10 @@ class Usage:
         return billed / TOKENS_PER_PRICE_UNIT
 
 
+NOTHING_SPENT = Usage()
+"""What a node that made no LLM call spent. Frozen, so one instance serves all of them."""
+
+
 def extract_usage(response: Any) -> Usage:
     """Read token counts off an LLM response.
 
