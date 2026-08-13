@@ -71,7 +71,7 @@ async def plan(state: ResearchState, *, settings: Settings | None = None) -> dic
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=usage.total_tokens,
+                usage=usage,
                 summary=f"{count} sub-topic" + ("s" if count != 1 else ""),
                 prompt_hash=prompt.hash,
             )

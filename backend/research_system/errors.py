@@ -33,3 +33,7 @@ class GuardrailError(Exception):
 
 class InvalidQueryError(GuardrailError):
     """The query failed validation, so no agent ever saw it."""
+
+
+class UnknownRunError(Exception):
+    """Nothing is saved under that run id, so there is nothing to resume."""

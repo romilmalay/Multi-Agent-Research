@@ -135,6 +135,6 @@ def _update(
         "search_queries_used": queries,
         "errors": errors,
         "pipeline_trace": [
-            trace_entry(AGENT, started=started, tokens=0, summary=summary),
+            trace_entry(AGENT, started=started, summary=summary),
         ],
     }

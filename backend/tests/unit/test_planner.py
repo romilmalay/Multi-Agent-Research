@@ -13,7 +13,15 @@ from research_system.prompts import load
 from research_system.settings import Settings
 
 QUERY = "What are the effects of microplastics on marine life?"
-TRACE_KEYS = {"agent", "duration_ms", "tokens", "summary", "prompt_hash"}
+TRACE_KEYS = {
+    "agent",
+    "duration_ms",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "summary",
+    "prompt_hash",
+}
 
 
 def raw(input_tokens: int = 300, output_tokens: int = 60) -> AIMessage:
@@ -200,6 +208,8 @@ async def test_the_trace_entry_has_the_agreed_shape(model: dict[str, Any]) -> No
     assert set(entry) == TRACE_KEYS
     assert entry["agent"] == "planner"
     assert entry["tokens"] == 360
+    # Split as well as summed: input and output are billed at different rates.
+    assert (entry["input_tokens"], entry["output_tokens"]) == (300, 60)
     assert entry["summary"] == "2 sub-topics"
     assert entry["duration_ms"] >= 0.0
 

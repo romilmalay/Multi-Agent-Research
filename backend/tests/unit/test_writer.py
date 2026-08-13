@@ -12,7 +12,15 @@ from research_system.prompts import load
 from research_system.settings import Settings
 
 QUERY = "What are the effects of microplastics on marine life?"
-TRACE_KEYS = {"agent", "duration_ms", "tokens", "summary", "prompt_hash"}
+TRACE_KEYS = {
+    "agent",
+    "duration_ms",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "summary",
+    "prompt_hash",
+}
 
 
 def claim(text: str, source_idx: int = 0, confidence: float = 0.9) -> dict[str, Any]:

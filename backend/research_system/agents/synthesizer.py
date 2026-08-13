@@ -23,7 +23,7 @@ from research_system.agents.trace import trace_entry
 from research_system.domain.schemas import SynthesizerOutput
 from research_system.domain.state import ResearchState
 from research_system.llm.factory import get_model
-from research_system.llm.usage import extract_usage
+from research_system.llm.usage import NOTHING_SPENT, Usage, extract_usage
 from research_system.logging import get_logger
 from research_system.prompts import load
 from research_system.settings import Settings, get_settings
@@ -45,7 +45,7 @@ async def synthesise(state: ResearchState, *, settings: Settings | None = None) 
             started=started,
             synthesis="",
             conflicts=[],
-            tokens=0,
+            usage=NOTHING_SPENT,
             errors=[],
             summary="skipped: no claims",
             prompt_hash="",
@@ -74,7 +74,7 @@ async def synthesise(state: ResearchState, *, settings: Settings | None = None) 
             started=started,
             synthesis="",
             conflicts=[],
-            tokens=usage.total_tokens,
+            usage=usage,
             errors=[f"synthesizer failed, the report is built from claims alone: {failure}"],
             summary="failed",
             prompt_hash=prompt.hash,
@@ -85,7 +85,7 @@ async def synthesise(state: ResearchState, *, settings: Settings | None = None) 
         started=started,
         synthesis=output.synthesis,
         conflicts=output.conflicts,
-        tokens=usage.total_tokens,
+        usage=usage,
         errors=[],
         summary=f"{len(claims)} claims cross-referenced, {len(output.conflicts)} conflicts",
         prompt_hash=prompt.hash,
@@ -97,7 +97,7 @@ def _update(
     started: float,
     synthesis: str,
     conflicts: list[str],
-    tokens: int,
+    usage: Usage,
     errors: list[str],
     summary: str,
     prompt_hash: str,
@@ -106,13 +106,13 @@ def _update(
     return {
         "synthesis": synthesis,
         "conflicts": conflicts,
-        "token_count": tokens,
+        "token_count": usage.total_tokens,
         "errors": errors,
         "pipeline_trace": [
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=tokens,
+                usage=usage,
                 summary=summary,
                 prompt_hash=prompt_hash,
             )

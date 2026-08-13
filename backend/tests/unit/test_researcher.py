@@ -18,7 +18,15 @@ from research_system.tools.toolbox import Toolbox
 
 PLAIN = "microplastic concentrations in the north pacific"
 DEFINITIONAL = "what is a microplastic"
-TRACE_KEYS = {"agent", "duration_ms", "tokens", "summary", "prompt_hash"}
+TRACE_KEYS = {
+    "agent",
+    "duration_ms",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "summary",
+    "prompt_hash",
+}
 
 
 def source(url: str, title: str = "a source") -> SearchResult:

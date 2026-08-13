@@ -22,7 +22,7 @@ from typing import Any
 from research_system.agents.trace import trace_entry
 from research_system.domain.state import ResearchState
 from research_system.llm.factory import get_model
-from research_system.llm.usage import extract_usage
+from research_system.llm.usage import NOTHING_SPENT, Usage, extract_usage
 from research_system.logging import get_logger
 from research_system.prompts import load
 from research_system.settings import Settings, get_settings
@@ -51,7 +51,7 @@ async def write(state: ResearchState, *, settings: Settings | None = None) -> di
             state,
             started=started,
             draft=NO_CLAIMS_DRAFT,
-            tokens=0,
+            usage=NOTHING_SPENT,
             errors=[],
             summary="skipped: no claims",
             prompt_hash="",
@@ -84,7 +84,7 @@ async def write(state: ResearchState, *, settings: Settings | None = None) -> di
             state,
             started=started,
             draft="",
-            tokens=usage.total_tokens,
+            usage=usage,
             errors=[f"writer produced no draft: {failure}"],
             summary="failed",
             prompt_hash=prompt.hash,
@@ -96,7 +96,7 @@ async def write(state: ResearchState, *, settings: Settings | None = None) -> di
         state,
         started=started,
         draft=draft,
-        tokens=usage.total_tokens,
+        usage=usage,
         errors=[],
         summary=f"draft {state['revision_count'] + 1} from {len(claims)} claims{fixing}",
         prompt_hash=prompt.hash,
@@ -128,7 +128,7 @@ def _update(
     *,
     started: float,
     draft: str,
-    tokens: int,
+    usage: Usage,
     errors: list[str],
     summary: str,
     prompt_hash: str,
@@ -142,13 +142,13 @@ def _update(
         "drafts": [*state["drafts"], draft],
         "current_draft": draft,
         "revision_count": state["revision_count"] + 1,
-        "token_count": tokens,
+        "token_count": usage.total_tokens,
         "errors": errors,
         "pipeline_trace": [
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=tokens,
+                usage=usage,
                 summary=summary,
                 prompt_hash=prompt_hash,
             )

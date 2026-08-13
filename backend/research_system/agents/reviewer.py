@@ -32,7 +32,7 @@ from research_system.domain.schemas import ReviewOutput
 from research_system.domain.state import ResearchState
 from research_system.guardrails.pii import scrub_pii
 from research_system.llm.factory import get_model
-from research_system.llm.usage import extract_usage
+from research_system.llm.usage import NOTHING_SPENT, Usage, extract_usage
 from research_system.logging import get_logger
 from research_system.prompts import load
 from research_system.settings import Settings, get_settings
@@ -57,7 +57,7 @@ async def review(state: ResearchState, *, settings: Settings | None = None) -> d
             started=started,
             verdict={},
             final_report="",
-            tokens=0,
+            usage=NOTHING_SPENT,
             errors=[],
             summary="skipped: no draft",
             prompt_hash="",
@@ -94,7 +94,7 @@ async def review(state: ResearchState, *, settings: Settings | None = None) -> d
             # written report because the grader was down helps nobody, and the
             # error below says the report went out ungraded.
             final_report=_final_report(state, passed=False, settings=settings),
-            tokens=usage.total_tokens,
+            usage=usage,
             errors=[f"reviewer produced no verdict, the draft is unreviewed: {failure}"],
             summary="failed",
             prompt_hash=prompt.hash,
@@ -111,7 +111,7 @@ async def review(state: ResearchState, *, settings: Settings | None = None) -> d
             "passed": passed,
         },
         final_report=_final_report(state, passed=passed, settings=settings),
-        tokens=usage.total_tokens,
+        usage=usage,
         errors=[],
         summary=f"score {output.score}/10, {'passed' if passed else 'failed'}, "
         f"{len(output.issues)} issues",
@@ -137,7 +137,7 @@ def _update(
     started: float,
     verdict: dict[str, Any],
     final_report: str,
-    tokens: int,
+    usage: Usage,
     errors: list[str],
     summary: str,
     prompt_hash: str,
@@ -151,13 +151,13 @@ def _update(
     return {
         "review": verdict,
         "final_report": final_report,
-        "token_count": tokens,
+        "token_count": usage.total_tokens,
         "errors": errors,
         "pipeline_trace": [
             trace_entry(
                 AGENT,
                 started=started,
-                tokens=tokens,
+                usage=usage,
                 summary=summary,
                 prompt_hash=prompt_hash,
             )

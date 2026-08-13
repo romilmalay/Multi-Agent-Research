@@ -6,7 +6,15 @@ from research_system.agents.quality_gate import assess
 from research_system.domain.state import ResearchState, SearchResult, default_state
 from research_system.settings import Settings
 
-TRACE_KEYS = {"agent", "duration_ms", "tokens", "summary", "prompt_hash"}
+TRACE_KEYS = {
+    "agent",
+    "duration_ms",
+    "tokens",
+    "input_tokens",
+    "output_tokens",
+    "summary",
+    "prompt_hash",
+}
 RANKING_KEYS = {"url", "title", "domain_score", "snippet_score", "score"}
 
 # A snippet that reports a finding, and one the same length that says nothing.
