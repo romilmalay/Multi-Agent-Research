@@ -1,6 +1,6 @@
 """The pipeline entry point, end to end. Every agent is stubbed: no model, no network."""
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 import pytest
@@ -19,7 +19,15 @@ from research_system.errors import UnknownRunError
 from research_system.graph.checkpointer import thread
 from research_system.llm.usage import Usage
 from research_system.logging import configure_logging
-from research_system.pipeline import resume_pipeline, run_pipeline
+from research_system.pipeline import (
+    Event,
+    Finished,
+    Progress,
+    resume_pipeline,
+    run_pipeline,
+    stream_pipeline,
+    stream_resume,
+)
 from research_system.settings import Settings
 from research_system.tools.toolbox import Toolbox
 
@@ -290,6 +298,96 @@ async def test_resuming_a_run_that_was_never_saved_says_so() -> None:
     async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
         with pytest.raises(UnknownRunError, match="no saved state for run 'nothing-here'"):
             await resume_pipeline("nothing-here", checkpointer=saver)
+
+
+async def collect(events: AsyncIterator[Event]) -> tuple[list[Progress], ResearchState]:
+    """Every progress event, and the state the run finished with."""
+    progress: list[Progress] = []
+    final: ResearchState | None = None
+    async for event in events:
+        if isinstance(event, Finished):
+            final = event.state
+        else:
+            progress.append(event)
+
+    assert final is not None, "the stream ended without a Finished event"
+    return progress, final
+
+
+async def test_a_streamed_run_reports_every_agent_starting_and_finishing() -> None:
+    """Two events per agent: one when it starts, one when its update lands.
+
+    The gate is the exception, and deliberately: it is arithmetic, so it has
+    nothing to say before it has already said everything.
+    """
+    progress, final = await collect(stream_pipeline(QUERY))
+
+    assert [event.agent for event in progress] == [
+        "planner",
+        "planner",
+        "researcher",
+        "researcher",
+        "quality_gate",
+        "analyst",
+        "analyst",
+        "synthesizer",
+        "synthesizer",
+        "writer",
+        "writer",
+        "reviewer",
+        "reviewer",
+    ]
+    assert final["final_report"] == REPORT
+
+
+async def test_a_researcher_says_which_sub_topic_it_took() -> None:
+    """The fan-out's events are indistinguishable without it: three copies, one name."""
+    progress, _ = await collect(stream_pipeline(QUERY))
+
+    assert Progress("researcher", "searching: microplastic bioaccumulation") in progress
+
+
+async def test_the_starting_event_arrives_before_the_agent_has_produced_anything() -> None:
+    """The whole point: `updates` alone is silence until the model answers."""
+    progress, _ = await collect(stream_pipeline(QUERY))
+    details = [event.detail for event in progress if event.agent == "writer"]
+
+    assert details == ["writing draft 1", "stubbed"]
+
+
+async def test_a_streamed_run_ends_in_the_same_state_as_an_awaited_one() -> None:
+    """Streaming is a reporting choice, not a different run."""
+    _, streamed = await collect(stream_pipeline(QUERY, "run-streamed"))
+    awaited = await run_pipeline(QUERY, "run-awaited")
+
+    assert streamed["final_report"] == awaited["final_report"]
+    assert streamed["token_count"] == awaited["token_count"]
+    assert [entry["agent"] for entry in streamed["pipeline_trace"]] == [
+        entry["agent"] for entry in awaited["pipeline_trace"]
+    ]
+
+
+async def test_a_streamed_resume_reports_only_what_is_left_to_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replaying the checkpoint's events would claim work this process never did."""
+    heal = crashes_once(writer_module, "write", monkeypatch)
+
+    async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
+        with pytest.raises(RuntimeError):
+            await run_pipeline(QUERY, "run-abc", checkpointer=saver)
+
+        heal()
+        progress, final = await collect(stream_resume("run-abc", checkpointer=saver))
+
+    assert [event.agent for event in progress] == ["writer", "writer", "reviewer", "reviewer"]
+    assert final["final_report"] == REPORT
+
+
+async def test_resuming_an_unknown_run_fails_before_it_yields_anything() -> None:
+    async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
+        with pytest.raises(UnknownRunError):
+            await collect(stream_resume("nothing-here", checkpointer=saver))
 
 
 async def test_the_run_id_is_bound_to_the_logs(capsys: pytest.CaptureFixture[str]) -> None:

@@ -55,19 +55,40 @@ schema violation raises — retrying those would just spend the tokens twice.
 # The gate costs microseconds of arithmetic. There is nothing here worth caching.
 
 
+def _announce(runtime: Runtime[RunContext], agent: str, detail: str) -> None:
+    """Tell whoever is streaming that this node has started, and on what.
+
+    A node's `updates` event arrives only when it finishes, which for a model call
+    is tens of seconds of silence. This is the node saying it is alive in the
+    meantime, and it belongs here rather than in the agent for the same reason the
+    rest of this module does: the agents know nothing about LangGraph.
+
+    `stream_writer` is a no-op when nobody is streaming, so this costs a dict.
+    """
+    runtime.stream_writer({"agent": agent, "detail": detail})
+
+
 async def planner_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Split the query into sub-topics."""
+    _announce(runtime, planner.AGENT, "splitting the query")
     return await planner.plan(state, settings=run_context(runtime).settings)
 
 
 async def researcher_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Search for one sub-topic. Fanned out, one copy per sub-topic."""
     context = run_context(runtime)
+    # `query` is this copy's sub-topic, which is the only way to tell three
+    # simultaneous researchers apart while they are all still running.
+    _announce(runtime, researcher.AGENT, f"searching: {state['query']}")
     return await researcher.research(state, toolbox=context.toolbox, settings=context.settings)
 
 
 def quality_gate_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
-    """Score the gathered sources. No model, no tool, so no `await`."""
+    """Score the gathered sources. No model, no tool, so no `await`.
+
+    No announcement either: it is arithmetic, and its `updates` event arrives
+    before anyone could have read a message saying it was about to start.
+    """
     return quality_gate.assess(state, settings=run_context(runtime).settings)
 
 
@@ -81,27 +102,32 @@ async def retry_researcher_node(
     replaying sub-topic queries the cache would answer identically.
     """
     context = run_context(runtime)
+    _announce(runtime, researcher.AGENT, f"searching again: {state['query']}")
     update = await researcher.research(state, toolbox=context.toolbox, settings=context.settings)
     return {**update, "retry_count": state["retry_count"] + 1}
 
 
 async def analyst_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Extract grounded claims from the ranked sources."""
+    _announce(runtime, analyst.AGENT, f"extracting claims from {len(state['sources'])} sources")
     return await analyst.analyse(state, settings=run_context(runtime).settings)
 
 
 async def synthesizer_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Cross-reference the claims into one narrative, and name the conflicts."""
+    _announce(runtime, synthesizer.AGENT, f"cross-referencing {len(state['key_claims'])} claims")
     return await synthesizer.synthesise(state, settings=run_context(runtime).settings)
 
 
 async def writer_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Write a draft, or revise the last one against the reviewer's issues."""
+    _announce(runtime, writer.AGENT, f"writing draft {state['revision_count'] + 1}")
     return await writer.write(state, settings=run_context(runtime).settings)
 
 
 async def reviewer_node(state: ResearchState, runtime: Runtime[RunContext]) -> dict[str, Any]:
     """Score the draft, and on acceptance publish the scrubbed final report."""
+    _announce(runtime, reviewer.AGENT, "reviewing the draft")
     return await reviewer.review(state, settings=run_context(runtime).settings)
 
 

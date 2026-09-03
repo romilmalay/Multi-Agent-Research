@@ -1,5 +1,7 @@
 """The CLI: what it prints, what it exits with, and what it refuses to run."""
 
+from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,7 +10,8 @@ from research_system import cli
 from research_system.agents.trace import trace_entry
 from research_system.domain.state import ResearchState, default_state
 from research_system.errors import UnknownRunError
-from research_system.llm.usage import Usage
+from research_system.llm.usage import NOTHING_SPENT, Usage
+from research_system.pipeline import Event, Finished, Progress
 from research_system.settings import Settings
 
 QUERY = "What are the effects of microplastics on marine life?"
@@ -39,21 +42,71 @@ def final_state(**overrides: Any) -> ResearchState:
     return state
 
 
+def step(agent: str, ms: float, usage: Usage = NOTHING_SPENT) -> dict[str, Any]:
+    """One trace entry with a fixed duration, so the shares are predictable."""
+    entry = trace_entry(agent, started=0.0, usage=usage, summary="did the work")
+    entry["duration_ms"] = ms
+    return entry
+
+
+def fanned_out() -> ResearchState:
+    """A run whose slowest single step is not its most expensive agent.
+
+    3,000ms of researcher spread over three parallel copies, against 2,000ms of
+    analyst in one. The step table shows the analyst on top; the rollup does not.
+    """
+    state = final_state()
+    state["pipeline_trace"] = [
+        step("planner", 1_000),
+        *[step("researcher", 1_000) for _ in range(3)],
+        step("analyst", 2_000, PLANNER_USAGE),
+    ]
+    return state
+
+
+def events(final: ResearchState) -> list[Event]:
+    """A run's stream: progress while it works, one `Finished` at the end."""
+    return [
+        Progress("planner", "splitting the query"),
+        Progress("planner", "2 sub-topics"),
+        Finished(final),
+    ]
+
+
+@pytest.fixture(autouse=True)
+def artifact(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """No test writes into the repo's `evals/reports/`. What was written is recorded.
+
+    Autouse rather than opt-in: a test that forgets it would leave a file behind
+    in the working tree, which is the kind of mess nobody traces back to a test.
+    """
+    written: dict[str, Any] = {}
+
+    def write(final: ResearchState, *, seconds: float, settings: Settings) -> Path:
+        written["run_id"], written["seconds"] = final["run_id"], seconds
+        return Path("evals/reports") / f"{final['run_id']}.json"
+
+    monkeypatch.setattr(cli, "write_artifact", write)
+    return written
+
+
 @pytest.fixture
 def ran(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Stub both pipeline entry points and record which one the CLI reached for."""
     seen: dict[str, Any] = {}
 
-    async def run(query: str, run_id: str | None = None, **kwargs: Any) -> ResearchState:
+    async def stream(query: str, run_id: str | None = None, **kwargs: Any) -> AsyncIterator[Event]:
         seen["query"], seen["kwargs"] = query, kwargs
-        return final_state()
+        for event in events(final_state()):
+            yield event
 
-    async def resume(run_id: str, **kwargs: Any) -> ResearchState:
+    async def resume(run_id: str, **kwargs: Any) -> AsyncIterator[Event]:
         seen["resumed"] = run_id
-        return final_state()
+        for event in events(final_state()):
+            yield event
 
-    monkeypatch.setattr(cli, "run_pipeline", run)
-    monkeypatch.setattr(cli, "resume_pipeline", resume)
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
+    monkeypatch.setattr(cli, "stream_resume", resume)
     return seen
 
 
@@ -63,6 +116,43 @@ def test_the_report_is_the_first_thing_printed(
     assert cli.main([QUERY]) == cli.EXIT_OK
 
     assert capsys.readouterr().out.startswith(REPORT)
+
+
+def test_progress_is_printed_while_the_run_is_still_going(
+    ran: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli.main([QUERY])
+    err = capsys.readouterr().err
+
+    assert "planner" in err
+    assert "splitting the query" in err
+
+
+def test_progress_goes_to_stderr_and_the_report_to_stdout(
+    ran: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """So `research "q" > report.md` still shows the run happening in the terminal."""
+    cli.main([QUERY])
+    printed = capsys.readouterr()
+
+    assert "splitting the query" not in printed.out
+    assert REPORT in printed.out
+    assert REPORT not in printed.err
+
+
+def test_a_stream_that_never_finishes_is_an_error_not_an_empty_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Finished` is the contract. Without it there is no run to print, and saying
+    so beats printing a report-shaped blank."""
+
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Progress("planner", "splitting the query")
+
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
+
+    with pytest.raises(RuntimeError, match="without producing a state"):
+        cli.main([QUERY])
 
 
 def test_the_query_reaches_the_pipeline_whitespace_collapsed(ran: dict[str, Any]) -> None:
@@ -96,6 +186,98 @@ def test_a_node_that_calls_no_model_shows_no_prompt(
     assert gate.split()[2:4] == ["0", "-"]  # no tokens, and a dash where a hash would be
 
 
+@pytest.fixture
+def rolled_up(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> list[str]:
+    """Run the CLI over `fanned_out()` and hand back the rollup's lines."""
+
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Finished(fanned_out())
+
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
+    cli.main([QUERY])
+
+    lines = capsys.readouterr().out.splitlines()
+    # Both tables start with "agent"; the rollup is the one with a share column.
+    start = lines.index(next(line for line in lines if line.split() == list(cli.TOTALS)))
+    return [line for line in lines[start:] if line and not line.startswith("-")]
+
+
+def test_the_rollup_gives_an_agent_one_line_however_often_it_ran(rolled_up: list[str]) -> None:
+    """Three researchers are one agent with three calls, not three mysteries."""
+    researcher = next(line for line in rolled_up if line.startswith("researcher"))
+
+    assert researcher.split()[1:3] == ["3", "3,000ms"]
+
+
+def test_the_rollup_puts_the_bottleneck_first(rolled_up: list[str]) -> None:
+    """Slowest agent at the top: the whole reason this table exists.
+
+    The analyst owns the slowest single step, so the chronological table points at
+    it. Summed, the fan-out costs more, and only this ordering says so.
+    """
+    names = [line.split()[0] for line in rolled_up]
+
+    assert names[: names.index("total")] == ["agent", "researcher", "analyst", "planner"]
+
+
+def test_share_is_of_agent_time_so_parallel_work_counts_in_full(rolled_up: list[str]) -> None:
+    """3,000 of 6,000ms of agent time, even though the three ran at once."""
+    researcher = next(line for line in rolled_up if line.startswith("researcher"))
+
+    assert researcher.split()[3] == "50.0%"
+
+
+def test_the_rollup_total_agrees_with_the_summary_line(rolled_up: list[str]) -> None:
+    """Two independent sums of the same trace. If they disagree, one is lying."""
+    total = next(line for line in rolled_up if line.startswith("total"))
+    summary = next(line for line in rolled_up if line.startswith("run run-abc"))
+
+    assert total.split()[1:3] == ["5", "6,000ms"]  # five steps, all their time
+    assert total.split()[4] == "120,000"
+    assert total.split()[5] == EXPECTED_COST
+    assert EXPECTED_COST in summary
+
+
+def test_the_run_is_written_down_and_the_path_printed(
+    ran: dict[str, Any], artifact: dict[str, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The terminal scrolls; the artifact does not. So the CLI says where it went."""
+    cli.main([QUERY])
+
+    assert artifact["run_id"] == "run-abc"
+    assert "artifact: evals/reports/run-abc.json" in capsys.readouterr().out
+
+
+def test_a_run_that_produced_no_report_is_still_written_down(
+    monkeypatch: pytest.MonkeyPatch, artifact: dict[str, Any]
+) -> None:
+    """A failed run is the one you most want a record of afterwards."""
+
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Finished(final_state(final_report="", errors=["everything went wrong"]))
+
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
+
+    assert cli.main([QUERY]) == cli.EXIT_NO_REPORT
+    assert artifact["run_id"] == "run-abc"
+
+
+def test_a_run_with_nothing_traced_still_prints(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What a run that died in its first node looks like: headers, and no totals."""
+
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Finished(final_state(pipeline_trace=[], final_report=""))
+
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
+
+    assert cli.main([QUERY]) == cli.EXIT_NO_REPORT
+    out = capsys.readouterr().out
+    assert "The run produced no report." in out
+    assert "total" not in out  # nothing ran, so there is nothing to total
+
+
 def test_the_summary_prices_the_run_from_the_split_token_counts(
     ran: dict[str, Any], capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -123,10 +305,10 @@ def test_non_fatal_errors_are_reported_under_the_run(
 ) -> None:
     """A degraded run still reports; what degraded it is not swallowed."""
 
-    async def run(query: str, run_id: str | None = None, **kwargs: Any) -> ResearchState:
-        return final_state(errors=["tavily failed, wikipedia answered instead"])
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Finished(final_state(errors=["tavily failed, wikipedia answered instead"]))
 
-    monkeypatch.setattr(cli, "run_pipeline", run)
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
     cli.main([QUERY])
     out = capsys.readouterr().out
 
@@ -137,10 +319,10 @@ def test_non_fatal_errors_are_reported_under_the_run(
 def test_a_run_with_no_report_exits_non_zero(
     ran: dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    async def run(query: str, run_id: str | None = None, **kwargs: Any) -> ResearchState:
-        return final_state(final_report="")
+    async def stream(query: str, **kwargs: Any) -> AsyncIterator[Event]:
+        yield Finished(final_state(final_report=""))
 
-    monkeypatch.setattr(cli, "run_pipeline", run)
+    monkeypatch.setattr(cli, "stream_pipeline", stream)
 
     assert cli.main([QUERY]) == cli.EXIT_NO_REPORT
     assert "The run produced no report." in capsys.readouterr().out
@@ -156,10 +338,11 @@ def test_resume_continues_a_saved_run_instead_of_starting_one(ran: dict[str, Any
 def test_resuming_a_run_that_was_never_saved_is_a_bad_request(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    async def resume(run_id: str, **kwargs: Any) -> ResearchState:
+    async def resume(run_id: str, **kwargs: Any) -> AsyncIterator[Event]:
         raise UnknownRunError(f"no saved state for run {run_id!r}")
+        yield  # pragma: no cover - unreachable, but this must be a generator
 
-    monkeypatch.setattr(cli, "resume_pipeline", resume)
+    monkeypatch.setattr(cli, "stream_resume", resume)
 
     assert cli.main(["--resume", "nothing-here"]) == cli.EXIT_BAD_REQUEST
     assert "error: no saved state for run 'nothing-here'" in capsys.readouterr().err
