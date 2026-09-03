@@ -38,3 +38,16 @@ def trace_entry(
         "summary": summary,
         "prompt_hash": prompt_hash,
     }
+
+
+def spent(trace: list[dict[str, Any]]) -> Usage:
+    """What a whole run used, added up from the entries above.
+
+    It lives here because this module owns the keys. A caller that summed
+    `input_tokens` itself would be the second place that knows the shape, and the
+    first to break when the shape changes.
+    """
+    return Usage(
+        input_tokens=sum(entry["input_tokens"] for entry in trace),
+        output_tokens=sum(entry["output_tokens"] for entry in trace),
+    )

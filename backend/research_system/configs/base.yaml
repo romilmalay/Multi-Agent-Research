@@ -94,6 +94,8 @@ guardrails:
 
 evaluation:
   dataset: evals/datasets/testset.yaml
+  # One JSON artifact per finished run, alongside the phase 13 aggregate reports.
+  reports: evals/reports
   judge_model: gpt-4o-mini
   # Judge scores accuracy, completeness and citation quality on 0-3.
   score_max: 3

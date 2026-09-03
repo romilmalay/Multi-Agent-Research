@@ -171,6 +171,7 @@ class GuardrailsSettings(Section):
 
 class EvaluationSettings(Section):
     dataset: Path
+    reports: Path
     judge_model: str
     score_max: int = Field(gt=0)
     target_improvement_pct: float = Field(ge=0)
