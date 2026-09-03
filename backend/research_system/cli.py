@@ -14,7 +14,7 @@ import argparse
 import asyncio
 import sys
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from typing import Any
 
 from research_system.domain.state import ResearchState
@@ -23,7 +23,7 @@ from research_system.graph.checkpointer import checkpointer
 from research_system.guardrails.injection import validate_query
 from research_system.llm.usage import Usage
 from research_system.logging import configure_logging
-from research_system.pipeline import resume_pipeline, run_pipeline
+from research_system.pipeline import Event, Finished, Progress, stream_pipeline, stream_resume
 from research_system.settings import Settings, get_settings
 
 HEADER = ("agent", "duration", "tokens", "prompt", "summary")
@@ -55,10 +55,32 @@ async def _research(query: str | None, resume: str | None, settings: Settings) -
     """One run, with the checkpointer open for exactly as long as it takes."""
     async with checkpointer(settings) as saver:
         if resume:
-            return await resume_pipeline(resume, settings=settings, checkpointer=saver)
+            return await _watch(stream_resume(resume, settings=settings, checkpointer=saver))
         # Validated here, at the edge, so a rejected query costs nothing at all.
         clean = validate_query(query or "", settings.guardrails)
-        return await run_pipeline(clean, settings=settings, checkpointer=saver)
+        return await _watch(stream_pipeline(clean, settings=settings, checkpointer=saver))
+
+
+async def _watch(events: AsyncIterator[Event]) -> ResearchState:
+    """Print each step as it happens, and return the run once it is over.
+
+    Progress goes to stderr and the report goes to stdout, so redirecting the
+    report to a file still shows the run happening in the terminal.
+    """
+    final: ResearchState | None = None
+    for_now = time.perf_counter()
+
+    async for event in events:
+        match event:
+            case Finished(state=state):
+                final = state
+            case Progress(agent=agent, detail=detail):
+                elapsed = time.perf_counter() - for_now
+                print(f"[{elapsed:6,.1f}s] {agent:<13} {detail}", file=sys.stderr)
+
+    if final is None:
+        raise RuntimeError("the run ended without producing a state")
+    return final
 
 
 def main(argv: Sequence[str] | None = None) -> int:
